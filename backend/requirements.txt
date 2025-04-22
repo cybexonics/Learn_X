@@ -75,7 +75,6 @@ pandas-stubs==2.2.3.241126
 passlib==1.7.4
 proto-plus==1.26.1
 protobuf==6.30.2
-pyasn1==0.6.1
 pyasn1_modules==0.4.2
 pycountry==23.12.11
 pycparser==2.21
