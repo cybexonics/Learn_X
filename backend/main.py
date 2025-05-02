@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # MongoDB connection
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb+srv://cybexonicsitconsultants:aayush@learnx.ceh6xzy.mongodb.net/?retryWrites=true&w=majority&appName=LearnX")
 client = AsyncIOMotorClient(MONGODB_URL)
 db = client.learnlive
 
@@ -264,17 +264,17 @@ async def send_push_notification(
     if not firebase_enabled:
         logger.warning("Firebase is not initialized, skipping push notification")
         return
-    
+
     try:
         # Get user's device tokens
         device_tokens = []
         async for token_doc in db.device_tokens.find({"user_id": user_id}):
             device_tokens.append(token_doc["device_token"])
-        
+
         if not device_tokens:
             logger.info(f"No device tokens found for user {user_id}")
             return
-        
+
         # Create message
         message = messaging.MulticastMessage(
             tokens=device_tokens,
@@ -299,44 +299,44 @@ async def send_push_notification(
                 ),
             ),
         )
-        
+
         # Send message
         response = messaging.send_multicast(message)
         logger.info(f"Push notification sent to {response.success_count} devices")
-        
+
         # Handle failures
         if response.failure_count > 0:
             for idx, resp in enumerate(response.responses):
                 if not resp.success:
                     logger.error(f"Failed to send notification to {device_tokens[idx]}: {resp.exception}")
-                    
+
                     # Remove invalid tokens
                     if "invalid-argument" in str(resp.exception) or "not-registered" in str(resp.exception):
                         await db.device_tokens.delete_one({"device_token": device_tokens[idx]})
-    
+
     except Exception as e:
         logger.error(f"Error sending push notification: {str(e)}")
 
 async def create_notification(notification_data: dict):
     notification_data["created_at"] = datetime.utcnow()
     notification_data["is_read"] = False
-    
+
     result = await db.notifications.insert_one(notification_data)
     notification_id = str(result.inserted_id)
-    
+
     # Send push notification
     user_id = notification_data["user_id"]
     title = notification_data["title"]
     message = notification_data["message"]
-    
+
     data = {}
     if "action_type" in notification_data:
         data["action_type"] = notification_data["action_type"]
     if "action_id" in notification_data:
         data["action_id"] = notification_data["action_id"]
-    
+
     await send_push_notification(user_id, title, message, data)
-    
+
     return notification_id
 
 # Routes
@@ -360,17 +360,17 @@ async def create_user(user: UserCreate, background_tasks: BackgroundTasks):
     db_user = await get_user(user.email)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
+
     hashed_password = get_password_hash(user.password)
     user_dict = user.dict()
     user_dict.pop("password")
     user_dict["password"] = hashed_password
     user_dict["created_at"] = datetime.utcnow()
-    
+
     result = await db.users.insert_one(user_dict)
     user_id = str(result.inserted_id)
     user_dict["id"] = user_id
-    
+
     # Create welcome notification
     notification_data = {
         "user_id": user_id,
@@ -379,7 +379,7 @@ async def create_user(user: UserCreate, background_tasks: BackgroundTasks):
         "action_type": "welcome",
     }
     background_tasks.add_task(create_notification, notification_data)
-    
+
     return user_dict
 
 @app.get("/users/me", response_model=User)
@@ -395,15 +395,15 @@ async def update_class_level(
 ):
     if current_user["role"] != "student":
         raise HTTPException(status_code=400, detail="Only students can update class level")
-    
+
     await db.users.update_one(
         {"_id": ObjectId(current_user["_id"])},
         {"$set": {"class_level": class_data["class_level"]}}
     )
-    
+
     updated_user = await db.users.find_one({"_id": ObjectId(current_user["_id"])})
     updated_user["id"] = str(updated_user["_id"])
-    
+
     # Create notification for class level update
     notification_data = {
         "user_id": str(current_user["_id"]),
@@ -412,7 +412,7 @@ async def update_class_level(
         "action_type": "profile_update",
     }
     background_tasks.add_task(create_notification, notification_data)
-    
+
     return updated_user
 
 @app.get("/courses", response_model=List[Course])
@@ -423,7 +423,7 @@ async def get_courses(
     query = {}
     if grade:
         query["grade"] = grade
-    
+
     courses = []
     async for course in db.courses.find(query):
         course["id"] = str(course["_id"])
@@ -434,23 +434,23 @@ async def get_courses(
 async def get_course(course_id: str, current_user: dict = Depends(get_current_user)):
     if not ObjectId.is_valid(course_id):
         raise HTTPException(status_code=400, detail="Invalid course ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     course["id"] = str(course["_id"])
     return course
 
 @app.get("/course/enrolled", response_model=List[Course])
 async def get_enrolled_courses(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["_id"])
-    
+
     courses = []
     async for course in db.courses.find({"students": user_id}):
         course["id"] = str(course["_id"])
         courses.append(course)
-    
+
     return courses
 
 @app.post("/courses", response_model=Course)
@@ -465,21 +465,21 @@ async def create_course(
 ):
     if current_user["role"] != "teacher":
         raise HTTPException(status_code=400, detail="Only teachers can create courses")
-    
+
     video_url = None
     if video:
         try:
             file_ext = video.filename.split(".")[-1] if "." in video.filename else ""
             unique_filename = f"{uuid.uuid4()}.{file_ext}"
             file_path = os.path.join(UPLOAD_DIR, unique_filename)
-            
+
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(video.file, buffer)
-            
+
             video_url = f"/uploads/{unique_filename}"
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error saving video: {str(e)}")
-    
+
     course_dict = {
         "title": title,
         "description": description,
@@ -491,11 +491,11 @@ async def create_course(
         "created_at": datetime.utcnow(),
         "video_url": video_url
     }
-    
+
     result = await db.courses.insert_one(course_dict)
     course_id = str(result.inserted_id)
     course_dict["id"] = course_id
-    
+
     # Create notification for the teacher
     notification_data = {
         "user_id": str(current_user["_id"]),
@@ -505,7 +505,7 @@ async def create_course(
         "action_id": course_id,
     }
     background_tasks.add_task(create_notification, notification_data)
-    
+
     # Create notifications for students in the appropriate grade
     async for student in db.users.find({"role": "student", "class_level": grade}):
         student_notification = {
@@ -516,7 +516,7 @@ async def create_course(
             "action_id": course_id,
         }
         background_tasks.add_task(create_notification, student_notification)
-    
+
     return course_dict
 
 @app.post("/courses/{course_id}/enroll")
@@ -526,22 +526,22 @@ async def enroll_in_course(
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     user_id = str(current_user["_id"])
-    
+
     if not ObjectId.is_valid(course_id):
         raise HTTPException(status_code=400, detail="Invalid course ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     if "students" in course and user_id in course["students"]:
         raise HTTPException(status_code=400, detail="Already enrolled in this course")
-    
+
     await db.courses.update_one(
         {"_id": ObjectId(course_id)},
         {"$push": {"students": user_id}}
     )
-    
+
     # Create notification for the student
     student_notification = {
         "user_id": user_id,
@@ -551,7 +551,7 @@ async def enroll_in_course(
         "action_id": course_id,
     }
     background_tasks.add_task(create_notification, student_notification)
-    
+
     # Create notification for the teacher
     teacher_notification = {
         "user_id": course["teacher_id"],
@@ -561,7 +561,7 @@ async def enroll_in_course(
         "action_id": course_id,
     }
     background_tasks.add_task(create_notification, teacher_notification)
-    
+
     return {"message": "Successfully enrolled in course"}
 
 @app.post("/payments", response_model=PaymentResponse)
@@ -572,13 +572,13 @@ async def process_payment(
 ):
     if not ObjectId.is_valid(payment.course_id):
         raise HTTPException(status_code=400, detail="Invalid course ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(payment.course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     payment_id = str(ObjectId())
-    
+
     payment_record = {
         "payment_id": payment_id,
         "user_id": str(current_user["_id"]),
@@ -588,16 +588,16 @@ async def process_payment(
         "payment_method": payment.payment_method,
         "transaction_date": datetime.utcnow()
     }
-    
+
     await db.payments.insert_one(payment_record)
-    
+
     user_id = str(current_user["_id"])
     if user_id not in course.get("students", []):
         await db.courses.update_one(
             {"_id": ObjectId(payment.course_id)},
             {"$push": {"students": user_id}}
         )
-    
+
     # Create payment notification for the student
     student_notification = {
         "user_id": user_id,
@@ -606,7 +606,7 @@ async def process_payment(
         "action_type": "payment",
     }
     background_tasks.add_task(create_notification, student_notification)
-    
+
     # Create enrollment notification for the teacher
     teacher_notification = {
         "user_id": course["teacher_id"],
@@ -615,7 +615,7 @@ async def process_payment(
         "action_type": "payment",
     }
     background_tasks.add_task(create_notification, teacher_notification)
-    
+
     return {
         "payment_id": payment_id,
         "status": "success",
@@ -634,30 +634,30 @@ async def delete_course(
 ):
     if not ObjectId.is_valid(course_id):
         raise HTTPException(status_code=400, detail="Invalid course ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     user_id = str(current_user["_id"])
     if course.get("teacher_id") != user_id:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Only the course teacher can delete this course"
         )
-    
+
     # Delete all materials associated with the course
     await db.course_materials.delete_many({"course_id": course_id})
-    
+
     # Delete all sessions associated with the course
     await db.sessions.delete_many({"course_id": course_id})
-    
+
     # Delete the course
     result = await db.courses.delete_one({"_id": ObjectId(course_id)})
-    
+
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     # Create notification for the teacher
     notification_data = {
         "user_id": user_id,
@@ -666,7 +666,7 @@ async def delete_course(
         "action_type": "course_deleted",
     }
     background_tasks.add_task(create_notification, notification_data)
-    
+
     # Create notifications for enrolled students
     for student_id in course.get("students", []):
         student_notification = {
@@ -676,7 +676,7 @@ async def delete_course(
             "action_type": "course_deleted",
         }
         background_tasks.add_task(create_notification, student_notification)
-    
+
     return {"message": "Course deleted successfully"}
 
 # Add a PUT endpoint to update courses
@@ -693,18 +693,18 @@ async def update_course(
 ):
     if not ObjectId.is_valid(course_id):
         raise HTTPException(status_code=400, detail="Invalid course ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     user_id = str(current_user["_id"])
     if course.get("teacher_id") != user_id:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Only the course teacher can update this course"
         )
-    
+
     video_url = course.get("video_url")
     if video:
         try:
@@ -713,19 +713,19 @@ async def update_course(
                 old_video_path = video_url.lstrip("/")
                 if os.path.exists(old_video_path):
                     os.remove(old_video_path)
-            
+
             # Save new video
             file_ext = video.filename.split(".")[-1] if "." in video.filename else ""
             unique_filename = f"{uuid.uuid4()}.{file_ext}"
             file_path = os.path.join(UPLOAD_DIR, unique_filename)
-            
+
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(video.file, buffer)
-            
+
             video_url = f"/uploads/{unique_filename}"
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error saving video: {str(e)}")
-    
+
     # Update the course
     await db.courses.update_one(
         {"_id": ObjectId(course_id)},
@@ -738,11 +738,11 @@ async def update_course(
             "updated_at": datetime.utcnow()
         }}
     )
-    
+
     # Get the updated course
     updated_course = await db.courses.find_one({"_id": ObjectId(course_id)})
     updated_course["id"] = str(updated_course["_id"])
-    
+
     # Create notification for the teacher
     notification_data = {
         "user_id": user_id,
@@ -752,7 +752,7 @@ async def update_course(
         "action_id": course_id,
     }
     background_tasks.add_task(create_notification, notification_data)
-    
+
     # Create notifications for enrolled students
     for student_id in updated_course.get("students", []):
         student_notification = {
@@ -763,7 +763,7 @@ async def update_course(
             "action_id": course_id,
         }
         background_tasks.add_task(create_notification, student_notification)
-    
+
     return updated_course
 
 # Course Materials Endpoints
@@ -774,27 +774,27 @@ async def get_course_materials(
 ):
     if not ObjectId.is_valid(course_id):
         raise HTTPException(status_code=400, detail="Invalid course ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     user_id = str(current_user["_id"])
     is_teacher = current_user["role"] == "teacher"
     is_course_teacher = course.get("teacher_id") == user_id
     is_enrolled = user_id in course.get("students", [])
-    
+
     if not (is_teacher or is_course_teacher or is_enrolled):
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="You must be the teacher or enrolled in the course to view materials"
         )
-    
+
     materials = []
     async for material in db.course_materials.find({"course_id": course_id}).sort("created_at", -1):
         material["id"] = str(material["_id"])
         materials.append(material)
-    
+
     return materials
 
 @app.post("/courses/{course_id}/materials", response_model=CourseMaterial)
@@ -810,38 +810,38 @@ async def create_course_material(
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     logger.info(f"Creating material for course {course_id}")
-    
+
     if not ObjectId.is_valid(course_id):
         raise HTTPException(status_code=400, detail="Invalid course ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     user_id = str(current_user["_id"])
     if course.get("teacher_id") != user_id:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Only the course teacher can add materials"
         )
-    
+
     file_url = None
     file_name = None
     file_size = None
-    
+
     if file:
         try:
             file_ext = file.filename.split(".")[-1] if "." in file.filename else ""
             unique_filename = f"{uuid.uuid4()}.{file_ext}"
             file_path = os.path.join(UPLOAD_DIR, unique_filename)
-            
+
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-            
+
             file_url = f"/uploads/{unique_filename}"
             file_name = file.filename
             file_size = os.path.getsize(file_path)
-            
+
             if not type:
                 if file_ext.lower() in ["pdf", "doc", "docx"]:
                     type = "document"
@@ -853,7 +853,7 @@ async def create_course_material(
                     type = "file"
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
-    
+
     material_dict = {
         "title": title,
         "description": description,
@@ -867,11 +867,11 @@ async def create_course_material(
         "created_at": datetime.utcnow(),
         "created_by": user_id
     }
-    
+
     result = await db.course_materials.insert_one(material_dict)
     material_id = str(result.inserted_id)
     material_dict["id"] = material_id
-    
+
     # Create notification for the teacher
     teacher_notification = {
         "user_id": user_id,
@@ -881,7 +881,7 @@ async def create_course_material(
         "action_id": material_id,
     }
     background_tasks.add_task(create_notification, teacher_notification)
-    
+
     # Create notifications for enrolled students
     for student_id in course.get("students", []):
         student_notification = {
@@ -892,7 +892,7 @@ async def create_course_material(
             "action_id": material_id,
         }
         background_tasks.add_task(create_notification, student_notification)
-    
+
     return material_dict
 
 @app.get("/courses/{course_id}/materials/{material_id}", response_model=CourseMaterial)
@@ -903,30 +903,30 @@ async def get_course_material(
 ):
     if not ObjectId.is_valid(course_id) or not ObjectId.is_valid(material_id):
         raise HTTPException(status_code=400, detail="Invalid ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     user_id = str(current_user["_id"])
     is_teacher = current_user["role"] == "teacher"
     is_course_teacher = course.get("teacher_id") == user_id
     is_enrolled = user_id in course.get("students", [])
-    
+
     if not (is_teacher or is_course_teacher or is_enrolled):
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="You must be the teacher or enrolled in the course to view this material"
         )
-    
+
     material = await db.course_materials.find_one({
         "_id": ObjectId(material_id),
         "course_id": course_id
     })
-    
+
     if not material:
         raise HTTPException(status_code=404, detail="Material not found")
-    
+
     material["id"] = str(material["_id"])
     return material
 
@@ -938,26 +938,26 @@ async def delete_course_material(
 ):
     if not ObjectId.is_valid(course_id) or not ObjectId.is_valid(material_id):
         raise HTTPException(status_code=400, detail="Invalid ID format")
-    
+
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
-    
+
     user_id = str(current_user["_id"])
     if course.get("teacher_id") != user_id:
         raise HTTPException(
-            status_code=403, 
+            status_code=403,
             detail="Only the course teacher can delete materials"
         )
-    
+
     material = await db.course_materials.find_one({
         "_id": ObjectId(material_id),
         "course_id": course_id
     })
-    
+
     if not material:
         raise HTTPException(status_code=404, detail="Material not found")
-    
+
     if material.get("file_url"):
         try:
             file_path = material["file_url"].lstrip("/")
@@ -965,15 +965,15 @@ async def delete_course_material(
                 os.remove(file_path)
         except Exception as e:
             logger.error(f"Error deleting file: {str(e)}")
-    
+
     result = await db.course_materials.delete_one({
         "_id": ObjectId(material_id),
         "course_id": course_id
     })
-    
+
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Material not found")
-    
+
     return {"message": "Material deleted successfully"}
 
 # Sessions Endpoints
@@ -981,14 +981,14 @@ async def delete_course_material(
 async def get_upcoming_sessions(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["_id"])
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    
+
     query = {}
     if current_user["role"] == "student":
         enrolled_courses = []
         async for course in db.courses.find({"students": user_id}):
             enrolled_courses.append(str(course["_id"]))
             enrolled_courses.append(course["title"])
-        
+
         query = {
             "date": {"$gte": today},
             "$or": [
@@ -1001,12 +1001,12 @@ async def get_upcoming_sessions(current_user: dict = Depends(get_current_user)):
             "date": {"$gte": today},
             "teacher_id": user_id
         }
-    
+
     sessions = []
     async for session in db.sessions.find(query).sort("date", 1).sort("time", 1):
         session["id"] = str(session["_id"])
         sessions.append(session)
-    
+
     return sessions
 
 @app.post("/sessions", response_model=Session)
@@ -1017,16 +1017,16 @@ async def create_session(
 ):
     if current_user["role"] != "teacher":
         raise HTTPException(status_code=400, detail="Only teachers can create sessions")
-    
+
     session_dict = session.dict()
     session_dict["teacher_id"] = str(current_user["_id"])
     session_dict["attendees"] = []
     session_dict["meeting_link"] = f"https://meet.jit.si/learnlive-session-{ObjectId()}"
-    
+
     result = await db.sessions.insert_one(session_dict)
     session_id = str(result.inserted_id)
     session_dict["id"] = session_id
-    
+
     # Create notification for the teacher
     teacher_notification = {
         "user_id": str(current_user["_id"]),
@@ -1036,18 +1036,18 @@ async def create_session(
         "action_id": session_id,
     }
     background_tasks.add_task(create_notification, teacher_notification)
-    
+
     # Find the course and notify enrolled students
     if session.course:
         course = None
         # Try to find by ID first
         if ObjectId.is_valid(session.course):
             course = await db.courses.find_one({"_id": ObjectId(session.course)})
-        
+
         # If not found, try to find by title
         if not course:
             course = await db.courses.find_one({"title": session.course})
-        
+
         if course:
             for student_id in course.get("students", []):
                 student_notification = {
@@ -1058,7 +1058,7 @@ async def create_session(
                     "action_id": session_id,
                 }
                 background_tasks.add_task(create_notification, student_notification)
-    
+
     return session_dict
 
 @app.get("/sessions/{session_id}", response_model=Session)
@@ -1067,36 +1067,36 @@ async def get_session(
     current_user: dict = Depends(get_current_user)
 ):
     session = await db.sessions.find_one({"_id": ObjectId(session_id)})
-    
+
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     session["id"] = str(session["_id"])
-    
+
     if current_user["role"] == "student":
         enrolled_courses = []
         async for course in db.courses.find({"students": str(current_user["_id"])}):
             enrolled_courses.append(str(course["_id"]))
             enrolled_courses.append(course["title"])
-        
+
         if session.get("course_id") not in enrolled_courses and session.get("course") not in enrolled_courses:
             raise HTTPException(
-                status_code=403, 
+                status_code=403,
                 detail="You must be enrolled in the course to access this session"
             )
-    
+
     return session
 
 # Notification Endpoints
 @app.get("/notifications", response_model=List[Notification])
 async def get_notifications(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["_id"])
-    
+
     notifications = []
     async for notification in db.notifications.find({"user_id": user_id}).sort("created_at", -1):
         notification["id"] = str(notification["_id"])
         notifications.append(notification)
-    
+
     return notifications
 
 @app.put("/notifications/{notification_id}/read")
@@ -1106,35 +1106,35 @@ async def mark_notification_as_read(
 ):
     if not ObjectId.is_valid(notification_id):
         raise HTTPException(status_code=400, detail="Invalid notification ID format")
-    
+
     user_id = str(current_user["_id"])
-    
+
     notification = await db.notifications.find_one({"_id": ObjectId(notification_id)})
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
-    
+
     if notification.get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="You can only mark your own notifications as read")
-    
+
     result = await db.notifications.update_one(
         {"_id": ObjectId(notification_id)},
         {"$set": {"is_read": True}}
     )
-    
+
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Notification not found or already marked as read")
-    
+
     return {"message": "Notification marked as read"}
 
 @app.put("/notifications/read-all")
 async def mark_all_notifications_as_read(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["_id"])
-    
+
     result = await db.notifications.update_many(
         {"user_id": user_id, "is_read": False},
         {"$set": {"is_read": True}}
     )
-    
+
     return {"message": f"Marked {result.modified_count} notifications as read"}
 
 @app.delete("/notifications/{notification_id}")
@@ -1144,21 +1144,21 @@ async def delete_notification(
 ):
     if not ObjectId.is_valid(notification_id):
         raise HTTPException(status_code=400, detail="Invalid notification ID format")
-    
+
     user_id = str(current_user["_id"])
-    
+
     notification = await db.notifications.find_one({"_id": ObjectId(notification_id)})
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
-    
+
     if notification.get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="You can only delete your own notifications")
-    
+
     result = await db.notifications.delete_one({"_id": ObjectId(notification_id)})
-    
+
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Notification not found")
-    
+
     return {"message": "Notification deleted successfully"}
 
 # Device Token Endpoint
@@ -1168,7 +1168,7 @@ async def register_device_token(
     current_user: dict = Depends(get_current_user)
 ):
     user_id = str(current_user["_id"])
-    
+
     # Store the device token in the database
     await db.device_tokens.update_one(
         {"user_id": user_id, "device_token": device_data.device_token},
@@ -1180,7 +1180,7 @@ async def register_device_token(
         }},
         upsert=True
     )
-    
+
     return {"message": "Device token registered successfully"}
 
 # Root endpoint
@@ -1204,10 +1204,10 @@ def find_available_port(start_port: int, max_port: int = 65535) -> Optional[int]
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     port = find_available_port(5000)
     if port is None:
         raise RuntimeError("No available ports found")
-    
+
     print(f"Starting server on port {port}")
     uvicorn.run(app, host="192.168.29.230", port=port)
